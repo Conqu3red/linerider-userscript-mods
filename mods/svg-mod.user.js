@@ -540,6 +540,8 @@ function* genLines({
         V2
     } = window
 
+    tolerance = tolerance == 0 ? 0.001 : tolerance
+
     if (fontFile === null) return;
 
     var scale = 1 / fontFile.unitsPerEm * fontSize;
@@ -572,6 +574,7 @@ function* genLines({
         })
 
         for (const poly of polys) {
+            if (poly.length < 2) continue;
             for (let i = 1; i < poly.length; i++) {
                 yield {
                     p1: V2.from(
