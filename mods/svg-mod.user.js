@@ -10,7 +10,6 @@
 // @match        https://*.official-linerider.com/*
 // @match        http://localhost:8000/*
 // @grant        none
-// @require      https://gist.githubusercontent.com/Conqu3red/49c02eb4693c81c4f58de0c7454bb1de/raw/fcc77410e7ff0e6646794f1e01ac68d640149c20/svg-parser.js
 // @require      http://cdnjs.cloudflare.com/ajax/libs/raphael/2.1.0/raphael-min.js
 // @require      https://cdn.jsdelivr.net/npm/opentype.js@latest/dist/opentype.min.js
 
@@ -49,6 +48,7 @@ class SvgMod {
         this.state = initState
 
         this.changed = false
+        this.nlines = 0;
 
         this.track = this.store.getState().simulator.committedEngine
 
@@ -114,10 +114,13 @@ class SvgMod {
 
                 // Example: Creates a line based on slider values
 
+                this.nlines = 0;
+
                 for (let {
                         p1,
                         p2
                     } of genLines(this.state)) {
+                    this.nlines++;
                     myLines.push({
                         x1: p1.x,
                         y1: p1.y,
@@ -167,6 +170,12 @@ function main() {
                 xOffs: 0,
                 yOffs: 0,
                 fontSize: 72,
+
+                // layout options
+                width: Infinity,
+                align: "left",
+                letterSpacing: 0,
+                lineHeight: 1.125,
             }
 
             // Pull from logic class
@@ -255,7 +264,7 @@ function main() {
                 title,
                 create('input', {
                     style: {
-                        width: '3em'
+                        width: '4em'
                     },
                     type: 'number',
                     ...props
@@ -331,6 +340,27 @@ function main() {
                         max: 250,
                         step: 1
                     }),
+                    this.renderSlider('width', 'Wrap Width', {
+                        min: 100,
+                        max: 2000,
+                        step: 100
+                    }),
+                    this.renderSlider('letterSpacing', 'Extra Letter Spacing', {
+                        min: 0,
+                        max: 50,
+                        step: 1
+                    }),
+                    this.renderSlider('lineHeight', 'Line Height', {
+                        min: 0,
+                        max: 2,
+                        step: 0.005
+                    }),
+
+                    /*
+                        align: "left",
+                    */
+
+                    create('div', null, `Lines: ${this.myMod.nlines}`),
 
                     // Commit changes button
 
@@ -375,21 +405,48 @@ if (window.registerCustomSetting) {
 
 // Utility functions can go here
 
-// Example: Generate a rectangle from inputs
-
-function encodePathAsString(path) {
-    let str = "";
-    for (const e of path) {
-        str += e[0];
-        str += e.splice(1).join(" ");
-    }
-
-    if (!str.endsWith("Z")) str += "Z";
-
-    return str;
+function applyOffsetAndScale(path, xOffs, yOffs, xScale, yScale) {
+    return path.map((e) => [e[0], ...e.slice(1).map((v, index) => index % 2 === 0 ? xOffs + v * xScale : yOffs + v * yScale)])
 }
 
-function generateLines(pathSections, opts = undefined) {
+function RaphaelPathToDescribedPath(path) {
+    let newPath = [];
+    for (const e of path) {
+        let newEntry;
+        switch (e[0]) {
+            case "M":
+            case "L":
+                newEntry = {
+                    code: e[0],
+                    x: e[1],
+                    y: e[2]
+                }
+                break;
+            case "C":
+                newEntry = {
+                    code: e[0],
+                    x1: e[1],
+                    y1: e[2],
+                    x2: e[3],
+                    y2: e[4],
+                    x: e[5],
+                    y: e[6],
+                }
+                break;
+            case "Z":
+                newEntry = {
+                    code: e[0],
+                }
+                break;
+        }
+
+        newPath.push(newEntry)
+    }
+
+    return newPath
+}
+
+function generatePolys(pathSections, opts = undefined) {
     opts = opts ? opts : {
         tolerance: 1
     };
@@ -429,14 +486,13 @@ function generateLines(pathSections, opts = undefined) {
         }
     }
 
+    let prev = null;
     for (const cmd of pathSections) {
-        //console.log(cmd)
         switch (cmd.code) {
             case 'M':
                 allLines.push(curLines = [
                     [cmd.x, cmd.y]
                 ]);
-                //polys.push(poly = []);
                 // intentional flow-through
             case 'L':
             case 'H':
@@ -447,19 +503,20 @@ function generateLines(pathSections, opts = undefined) {
                 break;
 
             case 'C':
-                if (cmd.x1 == cmd.x0 && cmd.x2 == cmd.x && cmd.y1 == cmd.y0 && cmd.y2 == cmd.y)
+                if (cmd.x1 == prev.x && cmd.x2 == cmd.x && cmd.y1 == prev.y && cmd.y2 == cmd.y)
                     add(cmd.x, cmd.y);
                 else {
-                    add(cmd.x0, cmd.y0);
-                    sampleCubicBézier(cmd.x0, cmd.y0, cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+                    sampleCubicBézier(prev.x, prev.y, cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
                 }
 
                 break;
 
             default:
-                console.error(cmd.command + ' commands (' + cmd.code + ') are not yet supported.');
+                console.error(`'${cmd.command}' is not supported`);
                 process.exit(2);
         }
+
+        prev = cmd;
     }
 
     return allLines;
@@ -473,87 +530,381 @@ function* genLines({
     xOffs = 0,
     yOffs = 0,
     fontSize = 72,
+
+    width = Infinity,
+    align = "left",
+    letterSpacing = 0,
+    lineHeight = 1.125,
 } = {}) {
     const {
         V2
     } = window
+
     if (fontFile === null) return;
 
-    //console.log(text)
+    var scale = 1 / fontFile.unitsPerEm * fontSize;
 
-    let path = fontFile.getPath(text, xOffs, yOffs, fontSize).toPathData(10) // x, y, baseline
-    //console.log(path)
-    let betterPath = Raphael.path2curve(path);
-    let better = parserFunction.makeAbsolute(parserFunction.parseSVG(encodePathAsString(betterPath)));
-    //console.log(better)
+    /* let path = fontFile.getPath(text, xOffs, yOffs, fontSize).toPathData(10) // x, y, baseline
+    let curvePath = Raphael.path2curve(path);
+    let labledCurvePath = RaphaelPathToDescribedPath(curvePath); */
 
-    let polys = generateLines(better, {
-        tolerance: tolerance
-    })
-    /* let points = svgPathToPolygons(betterStr, {
-        tolerance: 5,
-        decimals: 1
-    }) */
+    var result = computeLayout(fontFile, text, {
+        lineHeight: lineHeight * fontFile.unitsPerEm,
+        width: width / scale,
+        align,
+        letterSpacing
+    });
 
-    let nlines = 0;
+    for (const glyph of result.glyphs) {
+        let offset = glyph.position;
+        offset[0] = xOffs + offset[0] * scale;
+        offset[1] = yOffs + offset[1] * -scale;
+        let curvePath = Raphael.path2curve(glyph.data.path.toPathData(10));
+        curvePath = applyOffsetAndScale(curvePath, xOffs, yOffs, scale, -scale);
+        //console.log(curvePath)
+        let labledCurvePath = RaphaelPathToDescribedPath(curvePath);
 
-    for (const poly of polys) {
-        nlines += poly.length;
-        for (let i = 1; i < poly.length; i++) {
-            yield {
-                p1: V2.from(poly[i - 1][0], poly[i - 1][1]),
-                p2: V2.from(poly[i][0], poly[i][1]),
+        //console.log(glyph);
+
+
+        let polys = generatePolys(labledCurvePath, {
+            tolerance: tolerance
+        })
+
+        for (const poly of polys) {
+            for (let i = 1; i < poly.length; i++) {
+                yield {
+                    p1: V2.from(
+                        offset[0] + poly[i - 1][0],
+                        offset[1] + poly[i - 1][1]
+                    ),
+                    p2: V2.from(
+                        offset[0] + poly[i][0],
+                        offset[1] + poly[i][1]
+                    ),
+                }
             }
         }
-        // TODO: add case when the poly is "closed"
+
     }
 
-    console.log(nlines);
 
-    /* let points = [];
+}
 
-    for (i = 0.0; i < length; i += delta) {
-        let p = Raphael.getPointAtLength(path, i);
-        points.push([p.x, p.y]);
-    }
 
-    console.log("Points:", points.length)
-    console.log(points)
 
-    // Create points from inputs
+//
+//   Text Utilities
+//
 
-    for (let i = 1; i < points.length; i++) {
-        yield {
-            p1: V2.from(points[i - 1][0], points[i - 1][1]),
-            p2: V2.from(points[i][0], points[i][1]),
+
+
+// npm: word-wrapper
+
+var newline = /\n/
+var newlineChar = '\n'
+var whitespace = /\s/
+
+function wrap(text, opt) {
+    var lines = wordWrapLines(text, opt)
+    return lines.map(function (line) {
+        return text.substring(line.start, line.end)
+    }).join('\n')
+}
+
+function wordWrapLines(text, opt) {
+    opt = opt || {}
+
+    //zero width results in nothing visible
+    if (opt.width === 0 && opt.mode !== 'nowrap')
+        return []
+
+    text = text || ''
+    var width = typeof opt.width === 'number' ? opt.width : Number.MAX_VALUE
+    var start = Math.max(0, opt.start || 0)
+    var end = typeof opt.end === 'number' ? opt.end : text.length
+    var mode = opt.mode
+
+    var measure = opt.measure || monospace
+    if (mode === 'pre')
+        return pre(measure, text, start, end, width)
+    else
+        return greedy(measure, text, start, end, width, mode)
+}
+
+function idxOf(text, chr, start, end) {
+    var idx = text.indexOf(chr, start)
+    if (idx === -1 || idx > end)
+        return end
+    return idx
+}
+
+function isWhitespace(chr) {
+    return whitespace.test(chr)
+}
+
+function pre(measure, text, start, end, width) {
+    var lines = []
+    var lineStart = start
+    for (var i = start; i < end && i < text.length; i++) {
+        var chr = text.charAt(i)
+        var isNewline = newline.test(chr)
+
+        //If we've reached a newline, then step down a line
+        //Or if we've reached the EOF
+        if (isNewline || i === end - 1) {
+            var lineEnd = isNewline ? i : i + 1
+            var measured = measure(text, lineStart, lineEnd, width)
+            lines.push(measured)
+
+            lineStart = i + 1
         }
-    } */
+    }
+    return lines
+}
+
+function greedy(measure, text, start, end, width, mode) {
+    //A greedy word wrapper based on LibGDX algorithm
+    //https://github.com/libgdx/libgdx/blob/master/gdx/src/com/badlogic/gdx/graphics/g2d/BitmapFontCache.java
+    var lines = []
+
+    var testWidth = width
+    //if 'nowrap' is specified, we only wrap on newline chars
+    if (mode === 'nowrap')
+        testWidth = Number.MAX_VALUE
+
+    while (start < end && start < text.length) {
+        //get next newline position
+        var newLine = idxOf(text, newlineChar, start, end)
+
+        //eat whitespace at start of line
+        while (start < newLine) {
+            if (!isWhitespace(text.charAt(start)))
+                break
+            start++
+        }
+
+        //determine visible # of glyphs for the available width
+        var measured = measure(text, start, newLine, testWidth)
+
+        var lineEnd = start + (measured.end - measured.start)
+        var nextStart = lineEnd + newlineChar.length
+
+        //if we had to cut the line before the next newline...
+        if (lineEnd < newLine) {
+            //find char to break on
+            while (lineEnd > start) {
+                if (isWhitespace(text.charAt(lineEnd)))
+                    break
+                lineEnd--
+            }
+            if (lineEnd === start) {
+                if (nextStart > start + newlineChar.length) nextStart--
+                lineEnd = nextStart // If no characters to break, show all.
+            } else {
+                nextStart = lineEnd
+                //eat whitespace at end of line
+                while (lineEnd > start) {
+                    if (!isWhitespace(text.charAt(lineEnd - newlineChar.length)))
+                        break
+                    lineEnd--
+                }
+            }
+        }
+        if (lineEnd >= start) {
+            var result = measure(text, start, lineEnd, testWidth)
+            lines.push(result)
+        }
+        start = nextStart
+    }
+    return lines
+}
+
+//determines the visible number of glyphs within a given width
+function monospace(text, start, end, width) {
+    var glyphs = Math.min(width, end - start)
+    return {
+        start: start,
+        end: start + glyphs
+    }
+}
 
 
-    /* const pointA = [xOff, yOff]
-    const pointB = [xOff, yOff + height]
-    const pointC = [xOff + width, yOff + height]
-    const pointD = [xOff + width, yOff]
+// npm: opentype-layout
 
-    // Return lines connecting points
+// A default 'line-height' according to Chrome/FF/Safari (Jun 2016)
+var DEFAULT_LINE_HEIGHT = 1.175;
 
-    yield {
-        p1: V2.from(pointA[0], pointA[1]),
-        p2: V2.from(pointB[0], pointB[1])
+function computeLayout(font, text, opt) {
+    if (!font) throw new TypeError('Must specify a font from Opentype.js');
+    opt = opt || {};
+    text = text || '';
+    var align = opt.align || 'left';
+    var letterSpacing = opt.letterSpacing || 0;
+    var width = opt.width || Infinity;
+
+    // apply word wrapping to text
+    var wrapOpts = Object.assign({}, opt, {
+        measure: measure
+    });
+    var lines = wordWrapLines(text, wrapOpts);
+
+    // get max line width from all lines
+    var maxLineWidth = lines.reduce(function (prev, line) {
+        return Math.max(prev, line.width);
+    }, 0);
+
+    // As per CSS spec https://www.w3.org/TR/CSS2/visudet.html#line-height
+    var AD = Math.abs(font.ascender - font.descender);
+    var lineHeight = opt.lineHeight || font.unitsPerEm * DEFAULT_LINE_HEIGHT; // in em units
+    var L = lineHeight - AD;
+
+    // Y position is based on CSS line height calculation
+    var x = 0;
+    var y = -font.ascender - L / 2;
+    var totalHeight = (AD + L) * lines.length;
+    var preferredWidth = isFinite(width) ? width : maxLineWidth;
+    var glyphs = [];
+    var lastGlyph = null;
+
+    // Layout by line
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        var line = lines[lineIndex];
+        var start = line.start;
+        var end = line.end;
+        var lineWidth = line.width;
+
+        // Layout by glyph
+        for (var j = start, c = 0; j < end; j++, c++) {
+            var char = text.charAt(j);
+            var glyph = getGlyph(font, char);
+
+            // TODO:
+            // Align center & right are off by a couple pixels, need to revisit.
+            if (j === start && align === 'right') {
+                x -= glyph.leftSideBearing;
+            }
+
+            // Apply kerning
+            if (lastGlyph) {
+                x += font.getKerningValue(glyph, lastGlyph) || 0;
+            }
+
+            // Align text
+            var tx = 0;
+            if (align === 'center') {
+                tx = (preferredWidth - lineWidth) / 2;
+            } else if (align === 'right') {
+                tx = preferredWidth - lineWidth;
+            }
+
+            // Store glyph data
+            glyphs.push({
+                position: [x + tx, y],
+                data: glyph,
+                index: j,
+                column: c,
+                row: lineIndex
+            });
+
+            // Advance forward
+            x += letterSpacing + getAdvance(glyph, char);
+            lastGlyph = glyph;
+        }
+
+        // Advance down
+        y -= lineHeight;
+        x = 0;
     }
 
-    yield {
-        p1: V2.from(pointB[0], pointB[1]),
-        p2: V2.from(pointC[0], pointC[1])
+    // Compute left & right values
+    var left = 0;
+    if (align === 'center') left = (preferredWidth - maxLineWidth) / 2;
+    else if (align === 'right') left = preferredWidth - maxLineWidth;
+    var right = Math.max(0, preferredWidth - maxLineWidth - left);
+
+    return {
+        glyphs: glyphs,
+        baseline: L / 2 + Math.abs(font.descender),
+        leading: L,
+        lines: lines,
+        lineHeight: lineHeight,
+        left: left,
+        right: right,
+        maxLineWidth: maxLineWidth,
+        width: preferredWidth,
+        height: totalHeight
+    };
+
+    function measure(text, start, end, width) {
+        return computeMetrics(font, text, start, end, width, letterSpacing);
+    }
+};
+
+function getRightSideBearing(glyph) {
+    var glyphWidth = (glyph.xMax || 0) - (glyph.xMin || 0);
+    var rsb = glyph.advanceWidth - glyph.leftSideBearing - glyphWidth;
+    return rsb;
+}
+
+function computeMetrics(font, text, start, end, width, letterSpacing) {
+    start = Math.max(0, start || 0);
+    end = Math.min(end || text.length, text.length);
+    width = width || Infinity;
+    letterSpacing = letterSpacing || 0;
+
+    var pen = 0;
+    var count = 0;
+    var curWidth = 0;
+
+    for (var i = start; i < end; i++) {
+        var char = text.charAt(i);
+
+        // Tab is treated as multiple space characters
+        var glyph = getGlyph(font, char);
+        ensureMetrics(glyph);
+
+        // determine kern value to next glyph
+        var kerning = 0;
+        if (i < end - 1) {
+            var nextGlyph = getGlyph(font, text.charAt(i + 1));
+            kerning += font.getKerningValue(glyph, nextGlyph);
+        }
+
+        // determine if the new pen or width is above our limit
+        var xMax = glyph.xMax || 0;
+        var xMin = glyph.xMin || 0;
+        var glyphWidth = xMax - xMin;
+        var rsb = getRightSideBearing(glyph);
+        var newWidth = pen + glyph.leftSideBearing + glyphWidth + rsb;
+        if (newWidth > width) {
+            break;
+        }
+
+        pen += letterSpacing + getAdvance(glyph, char) + kerning;
+        curWidth = newWidth;
+        count++;
     }
 
-    yield {
-        p1: V2.from(pointC[0], pointC[1]),
-        p2: V2.from(pointD[0], pointD[1])
-    }
+    return {
+        start: start,
+        end: start + count,
+        width: curWidth
+    };
+}
 
-    yield {
-        p1: V2.from(pointD[0], pointD[1]),
-        p2: V2.from(pointA[0], pointA[1])
-    } */
+function getGlyph(font, char) {
+    var isTab = char === '\t';
+    return font.charToGlyph(isTab ? ' ' : char);
+}
+
+function getAdvance(glyph, char) {
+    // TODO: handle tab gracefully
+    return glyph.advanceWidth;
+}
+
+function ensureMetrics(glyph) {
+    // Opentype.js only builds its paths when the getter is accessed
+    // so we force it here.
+    return glyph.path;
 }
