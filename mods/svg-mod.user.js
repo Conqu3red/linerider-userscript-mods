@@ -162,13 +162,19 @@ function main() {
 
                 // Example: components of a rectangle
 
+                mode: "TEXT",
+
+                // Generic Options
+                tolerance: 0.5,
+                xOffs: 0,
+                yOffs: 0,
+
+                // TEXT Mode
+
                 fontFile: null,
                 fontName: "",
                 text: "",
 
-                tolerance: 0.5,
-                xOffs: 0,
-                yOffs: 0,
                 fontSize: 72,
 
                 // layout options
@@ -176,6 +182,12 @@ function main() {
                 align: "left",
                 letterSpacing: 0,
                 lineHeight: 1.125,
+
+                // SVG Mode
+
+                svgFile: null,
+                svgName: "",
+                scale: 1,
             }
 
             // Pull from logic class
@@ -212,7 +224,7 @@ function main() {
             }
         }
 
-        onFileChange() {
+        onFontFileChange() {
             return new Promise((resolve) => {
                 const file = event.target.files[0];
                 const fileReader = new FileReader();
@@ -221,13 +233,32 @@ function main() {
                     try {
                         const result = fileReader.result;
                         const font = opentype.parse(result);
-                        resolve(font);
+                        resolve([fileReader.fileName, font]);
                     } catch (e) {
                         console.log("Error when parsing: Unsupported font");
                         console.log(e);
                     }
                 }
                 fileReader.readAsArrayBuffer(file);
+            });
+        }
+
+        onSvgFileChange() {
+            return new Promise((resolve) => {
+                const file = event.target.files[0];
+                const fileReader = new FileReader();
+                fileReader.fileName = event.target.files[0].name;
+                fileReader.onloadend = (e) => {
+                    try {
+                        const result = fileReader.result;
+                        const dom = new DOMParser().parseFromString(result, "image/svg+xml")
+                        resolve([fileReader.fileName, dom]);
+                    } catch (e) {
+                        console.log("Error when parsing: Unsupported svg");
+                        console.log(e);
+                    }
+                }
+                fileReader.readAsText(file, "utf8");
             });
         }
 
@@ -277,6 +308,34 @@ function main() {
             )
         }
 
+        renderEnumChoices(key, title, items, props) {
+            return create("form", null,
+                title,
+                ...items.map((i) => this.renderRadioButton(key, i[0], i[1], {})),
+                props,
+            )
+        }
+
+        renderRadioButton(key, internalValue, title, props) {
+            props = {
+                ...props,
+                name: key,
+                value: internalValue,
+                onChange: create => this.setState({
+                    [key]: create.target.value
+                })
+            }
+
+            return create('div', null,
+                title,
+                create('input', {
+                    type: 'radio',
+                    ...props,
+                    onFocus: create => create.target.blur()
+                })
+            )
+        }
+
         // Main render function
 
         render() {
@@ -285,81 +344,130 @@ function main() {
                     // Render UI elements for the mod here
 
                     // Example: Rectangle inputs width, height, x, y
+                    this.renderEnumChoices("mode", "Mode", [
+                        ["TEXT", "Text Mode"],
+                        ["SVG", "SVG Mode"],
+                    ]),
 
-                    create('div', null,
-                        'Font: ',
-                        create('input', {
-                            type: 'file',
-                            onChange: create => this.onFileChange().then(result => {
-                                //result = normalizeLines(result);
-                                this.setState({
-                                    fontFile: result
-                                });
-                                this.setState({
-                                    fontName: result.fileName
-                                });
-                                console.log("Loaded " + result.fileName + " successfully");
-                            }).catch(err => {
-                                console.log("Error when parsing: Invalid font file");
-                                console.log(err);
+                    this.state.mode == "TEXT" &&
+                    create("div", null,
+
+                        create('div', null,
+                            'Font: ',
+                            create('input', {
+                                type: 'file',
+                                onChange: create => this.onFontFileChange().then(result => {
+                                    //result = normalizeLines(result);
+                                    let [fileName, res] = result;
+                                    this.setState({
+                                        fontFile: res,
+                                        fontName: fileName
+                                    });
+                                    console.log("Loaded " + fileName + " successfully");
+                                }).catch(err => {
+                                    console.log("Error when parsing: Invalid font file");
+                                    console.log(err);
+                                })
                             })
+                        ),
+
+                        this.state.fontFile != null && create('div', null, 'Loaded: ' + this.state.fontName),
+                        this.state.fontFile != null && create('div', null,
+                            "Text: ",
+                            create('textArea', {
+                                style: {
+                                    width: '88%'
+                                },
+                                type: 'text',
+                                value: this.state.text,
+                                onChange: create => this.setState({
+                                    text: create.target.value
+                                })
+                            })
+                        ),
+                        this.renderSlider('tolerance', 'Tolerance', {
+                            min: 0.001,
+                            max: 0.5,
+                            step: 0.001
+                        }),
+                        this.renderSlider('xOffs', 'X Offset', {
+                            min: -500,
+                            max: 500,
+                            step: 10
+                        }),
+                        this.renderSlider('yOffs', 'Y Offset', {
+                            min: -500,
+                            max: 500,
+                            step: 10
+                        }),
+                        this.renderSlider('fontSize', 'Font Size', {
+                            min: 10,
+                            max: 250,
+                            step: 1
+                        }),
+                        this.renderSlider('width', 'Wrap Width', {
+                            min: 100,
+                            max: 2000,
+                            step: 100
+                        }),
+                        this.renderSlider('letterSpacing', 'Extra Letter Spacing', {
+                            min: 0,
+                            max: 50,
+                            step: 1
+                        }),
+                        this.renderSlider('lineHeight', 'Line Height', {
+                            min: 0,
+                            max: 2,
+                            step: 0.005
+                        }),
+
+                        /*
+                            align: "left",
+                        */
+                    ),
+                    this.state.mode == "SVG" &&
+                    create("div", null,
+
+                        create('div', null,
+                            'SVG File: ',
+                            create('input', {
+                                type: 'file',
+                                onChange: create => this.onSvgFileChange().then(result => {
+                                    let [fileName, res] = result;
+                                    this.setState({
+                                        svgFile: res,
+                                        svgName: fileName
+                                    });
+                                    console.log("Loaded " + fileName + " successfully");
+                                }).catch(err => {
+                                    console.log("Error when parsing: Invalid svg file");
+                                    console.log(err);
+                                })
+                            })
+                        ),
+
+                        this.state.svgFile != null && create('div', null, 'Loaded: ' + this.state.svgName),
+                        this.renderSlider('tolerance', 'Tolerance', {
+                            min: 0.001,
+                            max: 0.5,
+                            step: 0.001
+                        }),
+                        this.renderSlider('xOffs', 'X Offset', {
+                            min: -500,
+                            max: 500,
+                            step: 10
+                        }),
+                        this.renderSlider('yOffs', 'Y Offset', {
+                            min: -500,
+                            max: 500,
+                            step: 10
+                        }),
+                        this.renderSlider("scale", "Scale", {
+                            min: 0.1,
+                            max: 10,
+                            step: 0.05
                         })
                     ),
-
-                    this.state.fontFile != null && create('div', null, 'Loaded: ' + this.state.fontName),
-                    this.state.fontFile != null && create('div', null,
-                        "Text: ",
-                        create('textArea', {
-                            style: {
-                                width: '88%'
-                            },
-                            type: 'text',
-                            value: this.state.text,
-                            onChange: create => this.setState({
-                                text: create.target.value
-                            })
-                        })
-                    ),
-                    this.renderSlider('tolerance', 'Tolerance', {
-                        min: 0.001,
-                        max: 0.5,
-                        step: 0.001
-                    }),
-                    this.renderSlider('xOffs', 'X Offset', {
-                        min: -500,
-                        max: 500,
-                        step: 10
-                    }),
-                    this.renderSlider('yOffs', 'Y Offset', {
-                        min: -500,
-                        max: 500,
-                        step: 10
-                    }),
-                    this.renderSlider('fontSize', 'Font Size', {
-                        min: 10,
-                        max: 250,
-                        step: 1
-                    }),
-                    this.renderSlider('width', 'Wrap Width', {
-                        min: 100,
-                        max: 2000,
-                        step: 100
-                    }),
-                    this.renderSlider('letterSpacing', 'Extra Letter Spacing', {
-                        min: 0,
-                        max: 50,
-                        step: 1
-                    }),
-                    this.renderSlider('lineHeight', 'Line Height', {
-                        min: 0,
-                        max: 2,
-                        step: 0.005
-                    }),
-
-                    /*
-                        align: "left",
-                    */
-
                     create('div', null, `Lines: ${this.myMod.nlines}`),
 
                     // Commit changes button
@@ -405,7 +513,7 @@ if (window.registerCustomSetting) {
 
 // Utility functions can go here
 
-function applyOffsetAndScale(path, xOffs, yOffs, xScale, yScale) {
+function applyScaleThenOffset(path, xOffs, yOffs, xScale, yScale) {
     return path.map((e) => [e[0], ...e.slice(1).map((v, index) => index % 2 === 0 ? xOffs + v * xScale : yOffs + v * yScale)])
 }
 
@@ -507,13 +615,13 @@ function generatePolys(pathSections, opts = undefined) {
                     add(cmd.x, cmd.y);
                 else {
                     sampleCubicBézier(prev.x, prev.y, cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+                    add(cmd.x, cmd.y);
                 }
 
                 break;
 
             default:
                 console.error(`'${cmd.command}' is not supported`);
-                process.exit(2);
         }
 
         prev = cmd;
@@ -522,8 +630,44 @@ function generatePolys(pathSections, opts = undefined) {
     return allLines;
 }
 
+function* pathToLines(path, {
+    xOffs = 0,
+    yOffs = 0,
+    xScale = 1,
+    yScale = -1,
+    tolerance = 1
+} = {}) {
+    tolerance = tolerance == 0 ? 0.001 : tolerance
 
-function* genLines({
+    // Turns path into just cubic bezier curves and moves
+    let curvePath = Raphael.path2curve(path);
+    curvePath = applyScaleThenOffset(curvePath, xOffs, yOffs, xScale, yScale);
+
+    // convert arrays to labeled objects
+    let labledCurvePath = RaphaelPathToDescribedPath(curvePath);
+
+    let polys = generatePolys(labledCurvePath, {
+        tolerance: tolerance
+    })
+
+    for (const poly of polys) {
+        if (poly.length < 2) continue;
+        for (let i = 1; i < poly.length; i++) {
+            yield {
+                p1: V2.from(
+                    poly[i - 1][0],
+                    poly[i - 1][1]
+                ),
+                p2: V2.from(
+                    poly[i][0],
+                    poly[i][1]
+                ),
+            }
+        }
+    }
+}
+
+function* textToLines({
     text = "",
     fontFile = null,
     tolerance = 1,
@@ -561,40 +705,89 @@ function* genLines({
         let offset = glyph.position;
         offset[0] = xOffs + offset[0] * scale;
         offset[1] = yOffs + offset[1] * -scale;
-        let curvePath = Raphael.path2curve(glyph.data.path.toPathData(10));
-        curvePath = applyOffsetAndScale(curvePath, xOffs, yOffs, scale, -scale);
-        //console.log(curvePath)
-        let labledCurvePath = RaphaelPathToDescribedPath(curvePath);
+        let path = glyph.data.path.toPathData(10);
 
-        //console.log(glyph);
-
-
-        let polys = generatePolys(labledCurvePath, {
-            tolerance: tolerance
+        yield* pathToLines(path, {
+            xOffs: offset[0],
+            yOffs: offset[1],
+            xScale: scale,
+            yScale: -scale,
+            tolerance
         })
 
-        for (const poly of polys) {
-            if (poly.length < 2) continue;
-            for (let i = 1; i < poly.length; i++) {
-                yield {
-                    p1: V2.from(
-                        offset[0] + poly[i - 1][0],
-                        offset[1] + poly[i - 1][1]
-                    ),
-                    p2: V2.from(
-                        offset[0] + poly[i][0],
-                        offset[1] + poly[i][1]
-                    ),
-                }
-            }
-        }
-
     }
-
-
 }
 
+function* svgToLines({
+    svgFile = null,
+    tolerance = 1,
+    xOffs = 0,
+    yOffs = 0,
+    scale = 1,
+} = {}) {
+    const {
+        V2
+    } = window
 
+    tolerance = tolerance == 0 ? 0.001 : tolerance
+
+    if (svgFile === null) return;
+
+    let paths = Array.from(svgFile.getElementsByTagName("path"), path => path.getAttribute("d"));
+
+    for (const path of paths) {
+        yield* pathToLines(path, {
+            xOffs: xOffs,
+            yOffs: -yOffs,
+            xScale: scale,
+            yScale: scale,
+            tolerance
+        })
+
+    }
+}
+
+function* genLines({
+    mode = "TEXT",
+    text = "",
+    fontFile = null,
+    tolerance = 1,
+    xOffs = 0,
+    yOffs = 0,
+    fontSize = 72,
+
+    width = Infinity,
+    align = "left",
+    letterSpacing = 0,
+    lineHeight = 1.125,
+
+    svgFile = null,
+    scale = 1,
+} = {}) {
+    if (mode === "TEXT") {
+        yield* textToLines({
+            text,
+            fontFile,
+            tolerance,
+            xOffs,
+            yOffs,
+            fontSize,
+
+            width,
+            align,
+            letterSpacing,
+            lineHeight,
+        });
+    } else if (mode === "SVG") {
+        yield* svgToLines({
+            svgFile,
+            tolerance,
+            xOffs,
+            yOffs,
+            scale,
+        });
+    }
+}
 
 //
 //   Text Utilities
