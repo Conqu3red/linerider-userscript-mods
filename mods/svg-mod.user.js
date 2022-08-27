@@ -115,11 +115,11 @@ class SvgMod {
                 // Example: Creates a line based on slider values
 
                 this.nlines = 0;
-
+                console.time("GenLines");
                 for (let {
-                        p1,
-                        p2
-                    } of genLines(this.state)) {
+                    p1,
+                    p2
+                } of genLines(this.state)) {
                     this.nlines++;
                     myLines.push({
                         x1: p1.x,
@@ -129,6 +129,8 @@ class SvgMod {
                         type: 2
                     })
                 }
+
+                console.timeEnd("GenLines");
 
                 if (myLines.length > 0) {
                     this.store.dispatch(addLines(myLines))
@@ -473,11 +475,11 @@ function main() {
                     // Commit changes button
 
                     create('button', {
-                            style: {
-                                float: 'left'
-                            },
-                            onClick: () => this.onCommit()
+                        style: {
+                            float: 'left'
                         },
+                        onClick: () => this.onCommit()
+                    },
                         'Commit'
                     )
                 ),
@@ -485,11 +487,11 @@ function main() {
                 // Creates main mod button here
 
                 create('button', {
-                        style: {
-                            backgroundColor: this.state.active ? 'lightblue' : null
-                        },
-                        onClick: this.onActivate.bind(this)
+                    style: {
+                        backgroundColor: this.state.active ? 'lightblue' : null
                     },
+                    onClick: this.onActivate.bind(this)
+                },
                     'SVG Mod'
                 )
             )
@@ -601,7 +603,7 @@ function generatePolys(pathSections, opts = undefined) {
                 allLines.push(curLines = [
                     [cmd.x, cmd.y]
                 ]);
-                // intentional flow-through
+            // intentional flow-through
             case 'L':
             case 'H':
             case 'V':
@@ -665,6 +667,10 @@ function* pathToLines(path, {
             }
         }
     }
+}
+
+function defaultIfNaN(n, defaultValue) {
+    return isNaN(n) ? defaultValue : n;
 }
 
 function* textToLines({
@@ -732,8 +738,9 @@ function* svgToLines({
     tolerance = tolerance == 0 ? 0.001 : tolerance
 
     if (svgFile === null) return;
-
     let paths = Array.from(svgFile.getElementsByTagName("path"), path => path.getAttribute("d"));
+
+    console.log("Path count: ", paths.length);
 
     for (const path of paths) {
         yield* pathToLines(path, {
@@ -768,23 +775,23 @@ function* genLines({
         yield* textToLines({
             text,
             fontFile,
-            tolerance,
-            xOffs,
-            yOffs,
-            fontSize,
+            tolerance: defaultIfNaN(tolerance, 1),
+            xOffs: defaultIfNaN(xOffs, 0),
+            yOffs: defaultIfNaN(yOffs, 0),
+            fontSize: defaultIfNaN(fontSize, 72),
 
-            width,
+            width: defaultIfNaN(width, Infinity),
             align,
-            letterSpacing,
-            lineHeight,
+            letterSpacing: defaultIfNaN(letterSpacing, 0),
+            lineHeight: defaultIfNaN(lineHeight, 1.125),
         });
     } else if (mode === "SVG") {
         yield* svgToLines({
             svgFile,
-            tolerance,
-            xOffs,
-            yOffs,
-            scale,
+            tolerance: defaultIfNaN(tolerance, 1),
+            xOffs: defaultIfNaN(xOffs, 0),
+            yOffs: defaultIfNaN(yOffs, 0),
+            scale: defaultIfNaN(scale, 1),
         });
     }
 }
